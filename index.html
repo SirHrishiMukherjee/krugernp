@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Simulonic ⇄ Infosophic • Canvas Lab + Lens</title>
+<title>Simulonic ⇄ Infosophic • Canvas Lab + Lens + Dynamic Pareto</title>
 <style>
   :root{
     --bg:#0f1115; --panel:#161a22; --card:#1c2230; --text:#e8eef7; --muted:#9bb0c8;
@@ -35,7 +35,7 @@
   .btn:hover{border-color:#3a425e}
   .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px}
   textarea.code{
-    width:100%; min-height:150px; resize:vertical; border:1px solid #283048; border-radius:12px; background:#151a26; color:var(--text); padding:10px; outline:none;
+    width:100%; min-height:150px; resize:vertical; border:1px solid #283048; border-radius:12px; background:#151a26; color:#e8eef7; padding:10px; outline:none;
   }
   .legend{
     position:absolute; right:12px; top:12px; background:rgba(16,20,30,.78); padding:8px 10px; border:1px solid #27304a; border-radius:10px; font-size:12px;
@@ -70,8 +70,9 @@
   .lensHUD{
     position:absolute; left:50%; transform:translateX(-50%); bottom:12px;
     background:rgba(16,20,30,.78); padding:8px 10px; border:1px solid #27304a; border-radius:10px; font-size:12px;
-    display:flex; gap:10px; align-items:center;
+    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
   }
+  .chk{display:flex; align-items:center; gap:8px; font-size:12px}
 </style>
 </head>
 <body>
@@ -80,7 +81,7 @@
       <div class="logo" title="Simulonic ⇄ Infosophic"></div>
       <div>
         <div class="title">Simulonic ⇄ Infosophic • Canvas Lab</div>
-        <div class="sub">Dual gauges for ds² • SimuLang hook • ART t-distribution lock-ons • Draggable Lens</div>
+        <div class="sub">Dual gauges for ds² • SimuLang • ART t-distribution • Lens • Dynamic Pareto</div>
       </div>
     </div>
     <div class="sub">Infosophic: Gösta Greimel • Simulonic: Hrishi Mukherjee • Integration: Greimel & Mukherjee • OBT: Oliver Boeschenstein</div>
@@ -93,6 +94,12 @@
     <div class="panel" id="ctrlPanel">
       <div class="h">Controls</div>
       <div class="row"><span class="muted">Pareto τ</span><input id="rngTau" type="range" min="0.05" max="1.5" step="0.01"><span class="mono" id="labTau"></span></div>
+      <div class="row chk">
+        <input id="chkAutoPareto" type="checkbox" />
+        <label for="chkAutoPareto">Auto Pareto (keep head ≈ 20% for target mass)</label>
+      </div>
+      <div class="row"><span class="muted">Target head mass</span><input id="rngTargetMass" type="range" min="0.50" max="0.95" step="0.01" style="flex:1"><span class="mono" id="labTargetMass"></span></div>
+
       <div class="row"><span class="muted">Quality Q</span><input id="rngQ" type="range" min="0.5" max="3" step="0.05"><span class="mono" id="labQ"></span></div>
       <div class="row"><span class="muted">Intent</span>
         <select id="selAxis" class="btn">
@@ -135,6 +142,8 @@
       <div class="statLine"><span class="muted">ds² (Vacuum)</span><span class="mono" id="statV">0.000</span></div>
       <div class="statLine"><span class="muted">Locked</span><span class="mono" id="statL">0</span></div>
       <div class="statLine"><span class="muted">Pareto τ</span><span class="mono" id="statT">0.00</span></div>
+      <div class="statLine"><span class="muted">Head k/N</span><span class="mono" id="statK">0/0</span></div>
+      <div class="statLine"><span class="muted">Head mass</span><span class="mono" id="statMass">0.00</span></div>
       <div class="statLine"><span class="muted">Optimistic</span><span class="mono" id="statPos">0</span></div>
       <div class="statLine"><span class="muted">Pessimistic</span><span class="mono" id="statNeg">0</span></div>
     </div>
@@ -183,7 +192,7 @@ lockon.k = 6
 mood.strength = 1.0
 `;
 function parseSimuLang(src){
-  const cfg = { paretoTau:0.55, qualityQ:1.0, intentAxis:'radial', intentStrength:1.2, artNu:3, artPoints:260, lockTopK:6, moodStrength:1.0 };
+  const cfg = { paretoTau:0.55, qualityQ:1.0, intentAxis:'radial', intentStrength:1.2, artNu:3, artPoints:260, lockTopK:6, moodStrength:1.0, autoPareto:false, targetMass:0.80 };
   const lines = src.split('\n').map(s=>s.trim()).filter(Boolean);
   for(const l of lines){
     const m = l.match(/^([a-z.]+)\s*=\s*([^\#]+)(?:\#.*)?$/i); if(!m) continue;
@@ -196,6 +205,8 @@ function parseSimuLang(src){
     if(k==='art.points') cfg.artPoints = Math.max(10, Math.min(5000, parseInt(v)));
     if(k==='lockon.k') cfg.lockTopK = Math.max(0, parseInt(v));
     if(k==='mood.strength') cfg.moodStrength = Math.max(0, parseFloat(v));
+    if(k==='auto.pareto') cfg.autoPareto = (''+v).toLowerCase().trim() === 'true';
+    if(k==='target.mass') cfg.targetMass = Math.min(0.95, Math.max(0.5, parseFloat(v)));
   }
   return cfg;
 }
@@ -216,53 +227,30 @@ const ctx = stage.getContext('2d');
 const E = {
   tau: rngTau, q: rngQ, intent: rngIntent, axis: selAxis, nu: rngNu, pts: rngPts, mood: rngMood,
   labTau, labQ, labIntent, labNu, labPts, labMood,
-  statG, statV, statL, statT, statPos, statNeg,
+  statG, statV, statL, statT, statPos, statNeg, statK, statMass,
   simTxt: simTxt, btnApply, btnReset, btnShuffle, btnClear,
   outlookGrid: outlookGrid,
-  btnLensMode: btnLensMode, rngLensR: rngLensR, labLensR: labLensR
+  btnLensMode: btnLensMode, rngLensR: rngLensR, labLensR: labLensR,
+  chkAutoPareto: chkAutoPareto, rngTargetMass: rngTargetMass, labTargetMass: labTargetMass
 };
 E.simTxt.value = defaultSimuLang;
 
-/* ---------- Lens (draggable x-ray) ---------- */
-const lens = {
-  x: stage.clientWidth/2,
-  y: stage.clientHeight/2,
-  r: 180,
-  mode: 'infosophic', // 'infosophic' | 'simulonic'
-  dragging: false,
-  offsetX: 0, offsetY: 0
-};
-E.rngLensR.value = lens.r; E.labLensR.textContent = lens.r;
-
-function setLensMode(next){
-  lens.mode = next;
-  E.btnLensMode.textContent = next==='infosophic' ? 'Lens: Infosophic (I)' : 'Lens: Simulonic (S)';
-}
-E.btnLensMode.addEventListener('click', ()=>{
-  setLensMode(lens.mode==='infosophic' ? 'simulonic' : 'infosophic');
-});
-document.addEventListener('keydown', (e)=>{
-  if(e.key==='i' || e.key==='I') setLensMode('infosophic');
-  if(e.key==='s' || e.key==='S') setLensMode('simulonic');
-});
-E.rngLensR.addEventListener('input', (e)=>{
-  lens.r = parseInt(e.target.value,10); E.labLensR.textContent = lens.r;
-});
-
-stage.addEventListener('mousedown', (e)=>{
-  const rect = stage.getBoundingClientRect(); const x=e.clientX-rect.left, y=e.clientY-rect.top;
-  const dx=x-lens.x, dy=y-lens.y; if(Math.hypot(dx,dy) <= lens.r){ lens.dragging=true; lens.offsetX=dx; lens.offsetY=dy; }
-});
+/* ---------- Lens ---------- */
+const lens = { x: stage.clientWidth/2, y: stage.clientHeight/2, r: 180, mode: 'infosophic', dragging:false, offsetX:0, offsetY:0 };
+rngLensR.value = lens.r; labLensR.textContent = lens.r;
+function setLensMode(next){ lens.mode = next; btnLensMode.textContent = next==='infosophic' ? 'Lens: Infosophic (I)' : 'Lens: Simulonic (S)'; }
+btnLensMode.addEventListener('click', ()=> setLensMode(lens.mode==='infosophic' ? 'simulonic' : 'infosophic'));
+document.addEventListener('keydown', (e)=>{ if(e.key.toLowerCase()==='i') setLensMode('infosophic'); if(e.key.toLowerCase()==='s') setLensMode('simulonic'); });
+rngLensR.addEventListener('input', (e)=>{ lens.r = parseInt(e.target.value,10); labLensR.textContent = lens.r; });
+stage.addEventListener('mousedown', (e)=>{ const r=stage.getBoundingClientRect(); const x=e.clientX-r.left, y=e.clientY-r.top; const dx=x-lens.x, dy=y-lens.y; if(Math.hypot(dx,dy)<=lens.r){ lens.dragging=true; lens.offsetX=dx; lens.offsetY=dy; }});
 window.addEventListener('mouseup', ()=>{ lens.dragging=false; });
-window.addEventListener('mousemove', (e)=>{
-  if(!lens.dragging) return;
-  const rect = stage.getBoundingClientRect(); let x=e.clientX-rect.left, y=e.clientY-rect.top;
-  lens.x = x - lens.offsetX; lens.y = y - lens.offsetY;
-});
+window.addEventListener('mousemove', (e)=>{ if(!lens.dragging) return; const r=stage.getBoundingClientRect(); lens.x = e.clientX-r.left - lens.offsetX; lens.y = e.clientY-r.top - lens.offsetY; });
 
 /* ---------- UI wiring ---------- */
 function syncControls(){
   E.tau.value = cfg.paretoTau; E.labTau.textContent = cfg.paretoTau.toFixed(2);
+  E.chkAutoPareto.checked = cfg.autoPareto;
+  E.rngTargetMass.value = cfg.targetMass; E.labTargetMass.textContent = cfg.targetMass.toFixed(2);
   E.q.value = cfg.qualityQ; E.labQ.textContent = cfg.qualityQ.toFixed(2);
   E.intent.value = cfg.intentStrength; E.labIntent.textContent = cfg.intentStrength.toFixed(2);
   E.axis.value = cfg.intentAxis;
@@ -274,16 +262,16 @@ function syncControls(){
 syncControls();
 
 function buildOutlookGrid(){
-  E.outlookGrid.innerHTML = '';
+  outlookGrid.innerHTML = '';
   DIMENSIONS.forEach((d,i)=>{
     const label = document.createElement('div');
     const sw = document.createElement('span'); sw.className='swatch'; sw.style.background = `hsl(${hueForDim(i)} 80% 60%)`;
     label.appendChild(sw); label.appendChild(document.createTextNode(d));
-    const btn = document.createElement('button');
-    const isPos = outlook[d]>=0; btn.className='toggle ' + (isPos?'pos':'neg'); btn.textContent=isPos?'Optimistic':'Pessimistic';
+    const btn = document.createElement('button'); const isPos = outlook[d]>=0;
+    btn.className='toggle ' + (isPos?'pos':'neg'); btn.textContent=isPos?'Optimistic':'Pessimistic';
     btn.title = `Toggle outlook for ${d}`;
     btn.addEventListener('click', ()=>{ outlook[d]=(outlook[d]>=0)?-1:+1; buildOutlookGrid(); buildART(); });
-    E.outlookGrid.appendChild(label); E.outlookGrid.appendChild(btn);
+    outlookGrid.appendChild(label); outlookGrid.appendChild(btn);
   });
 }
 buildOutlookGrid();
@@ -308,15 +296,40 @@ function buildART(){
   }
   const maxS = points.reduce((m,p)=>Math.max(m,p.sal),1e-6);
   for(const p of points){ p.sal/=maxS; }
-  weights = softmax(points.map(p=>p.sal), Math.max(0.05,cfg.paretoTau));
-  // auto top-K lock-ons
+  recomputeWeights(); // uses cfg.paretoTau
   if(cfg.lockTopK>0){
     const top=[...points.map((p,i)=>[p.sal,i])].sort((a,b)=>b[0]-a[0]).slice(0,cfg.lockTopK).map(x=>x[1]);
     for(const i of top) lockSet.add(i);
   }
   E.statPos.textContent = pos; E.statNeg.textContent = neg;
 }
-buildART();
+function recomputeWeights(){
+  weights = softmax(points.map(p=>p.sal), Math.max(0.05,cfg.paretoTau));
+}
+
+/* ---------- Dynamic Pareto control ---------- */
+function headStatsForTarget(targetMass){
+  // Sort weights desc; find smallest k with cumulative mass ≥ targetMass
+  const arr = weights.map((w,i)=>[w,i]).sort((a,b)=>b[0]-a[0]);
+  let cum=0, k=0;
+  for(k=0;k<arr.length;k++){ cum += arr[k][0]; if(cum>=targetMass) break; }
+  const headFrac = (k+1)/Math.max(1,weights.length);
+  return {k: k+1, headFrac, mass: cum};
+}
+function autoAdjustTau(dtSec){
+  // target: headFrac ≈ 0.20 (for default 80/20), but computed from targetMass so we don't hardcode 0.20
+  const targetMass = cfg.targetMass; // e.g., 0.80
+  const {headFrac} = headStatsForTarget(targetMass);
+  const targetHeadFrac = 0.20; // can also be made a slider if you want
+  const error = headFrac - targetHeadFrac; // positive => head too large -> decrease τ to sharpen
+  const gain = 1.0; // base gain
+  const step = -gain * error * dtSec; // negative error increases τ (softer); positive error decreases τ (sharper)
+  cfg.paretoTau = Math.min(1.5, Math.max(0.05, cfg.paretoTau + step));
+  // re-sync labels and slider
+  E.tau.value = cfg.paretoTau; E.labTau.textContent = cfg.paretoTau.toFixed(2); E.statT.textContent = cfg.paretoTau.toFixed(2);
+  // recompute weights with new τ
+  recomputeWeights();
+}
 
 /* ---------- Gauges (global) ---------- */
 function computeDS2Dual(lockedIdx){
@@ -338,85 +351,94 @@ function computeDS2Dual(lockedIdx){
   return { g: squash(dsG), v: squash(dsV) };
 }
 
-/* ---------- Lens rendering helpers ---------- */
-/* Fast local “x-ray”: score each point by kernel-with-center only (O(n)), clip to circle. */
+/* ---------- Lens helpers ---------- */
 function lensScores(){
   const cx=lens.x, cy=lens.y, r=lens.r;
-  const useK = (a)=>Math.exp(-((a.x-cx)**2 + (a.y-cy)**2)/3000);     // Green-ish
-  const useG = (a)=>1/(Math.hypot(a.x-cx, a.y-cy)+1e-3);            // inverse-gradient
+  const useK = (a)=>Math.exp(-((a.x-cx)**2 + (a.y-cy)**2)/3000);
+  const useG = (a)=>1/(Math.hypot(a.x-cx, a.y-cy)+1e-3);
   const kernel = lens.mode==='infosophic' ? useK : useG;
 
   let scores = new Float32Array(points.length);
   let sum=0;
   for(let i=0;i<points.length;i++){
-    const p=points[i]; const dx=p.x-cx, dy=p.y-cy; const inside = (dx*dx+dy*dy)<=r*r;
-    if(!inside) { scores[i]=0; continue; }
+    const p=points[i]; const dx=p.x-cx, dy=p.y-cy; const inside=(dx*dx+dy*dy)<=r*r;
+    if(!inside){ scores[i]=0; continue; }
     const s = (weights[i]/Math.max(0.5,cfg.qualityQ)) * kernel(p);
-    scores[i]=s; sum += s;
+    scores[i]=s; sum+=s;
   }
-  // normalize for color scale and a local ds² readout
   const maxScore = Math.max(1e-6, ...scores);
   for(let i=0;i<scores.length;i++) scores[i]/=maxScore;
-  // pseudo local ds² (squashed total intensity)
   const dsLocal = 1 - Math.exp(-sum/20);
   return {scores, dsLocal};
 }
-
 function drawLensOverlay(scores){
   const r=lens.r, cx=lens.x, cy=lens.y;
-  // Clip to circle
-  ctx.save();
-  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.clip();
-
-  // Subtle darken background inside lens
-  ctx.fillStyle = 'rgba(0,0,0,.25)';
-  ctx.fillRect(cx-r-2, cy-r-2, r*2+4, r*2+4);
-
-  // Heat overlay for points inside lens
+  ctx.save(); ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.clip();
+  ctx.fillStyle='rgba(0,0,0,.25)'; ctx.fillRect(cx-r-2, cy-r-2, r*2+4, r*2+4);
   for(let i=0;i<points.length;i++){
-    const s=scores[i]; if(s<=0) continue;
-    const p=points[i];
-    // color ramp: Infosophic → cyan/blue, Simulonic → gold/orange
-    let col;
-    if(lens.mode==='infosophic'){
-      const a=.25 + .55*s; col = `hsla(195, 90%, 60%, ${a})`; // teal
-    }else{
-      const a=.25 + .55*s; col = `hsla(40, 95%, 60%, ${a})`;  // amber
-    }
-    ctx.beginPath(); ctx.fillStyle=col; ctx.arc(p.x, p.y, 2 + 3*s, 0, Math.PI*2); ctx.fill();
+    const s=scores[i]; if(s<=0) continue; const p=points[i];
+    const a=.25 + .55*s; const col = (lens.mode==='infosophic') ? `hsla(195, 90%, 60%, ${a})` : `hsla(40, 95%, 60%, ${a})`;
+    ctx.beginPath(); ctx.fillStyle=col; ctx.arc(p.x,p.y, 2+3*s,0,Math.PI*2); ctx.fill();
   }
-
-  // Inner ellipse = local ds² readout
-  const {dsLocal} = lensScores(); // recompute tiny scalar (cheap)
+  const {dsLocal} = lensScores();
   ctx.strokeStyle = lens.mode==='infosophic' ? 'rgba(97,218,251,.9)' : 'rgba(251,191,36,.9)';
-  ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.ellipse(cx, cy, 40*(.6+.8*dsLocal), 40*(.6+.8*dsLocal), 0, 0, Math.PI*2); ctx.stroke();
-
+  ctx.lineWidth=2; ctx.beginPath(); ctx.ellipse(cx,cy, 40*(.6+.8*dsLocal), 40*(.6+.8*dsLocal), 0,0,Math.PI*2); ctx.stroke();
   ctx.restore();
 
-  // Lens rim + label
-  ctx.beginPath();
-  ctx.lineWidth = 2.2;
-  ctx.setLineDash([6,4]);
+  ctx.beginPath(); ctx.setLineDash([6,4]); ctx.lineWidth=2.2;
   ctx.strokeStyle = lens.mode==='infosophic' ? 'rgba(97,218,251,.9)' : 'rgba(251,191,36,.9)';
-  ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.stroke();
-  ctx.setLineDash([]);
+  ctx.arc(cx,cy,r,0,Math.PI*2); ctx.stroke(); ctx.setLineDash([]);
 
-  ctx.fillStyle = 'rgba(16,20,30,.85)';
-  ctx.strokeStyle = '#27304a';
-  ctx.lineWidth = 1;
+  ctx.fillStyle='rgba(16,20,30,.85)'; ctx.strokeStyle='#27304a'; ctx.lineWidth=1;
   const label = lens.mode==='infosophic' ? 'Infosophic lens (∇⁻¹)' : 'Simulonic lens (∇¹)⁻¹';
   const metrics = lensScores();
-  const text = `${label}  •  r=${r}  •  local ds²=${metrics.dsLocal.toFixed(3)}`;
-  ctx.font = '12px ui-monospace';
-  const w = ctx.measureText(text).width + 12, h=20;
+  const text = `${label} • r=${r} • local ds²=${metrics.dsLocal.toFixed(3)}`;
+  ctx.font='12px ui-monospace'; const w=ctx.measureText(text).width+12, h=20;
   ctx.beginPath(); ctx.roundRect(cx - w/2, cy - r - 28, w, h, 6); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#cfe8ff';
-  ctx.fillText(text, cx - w/2 + 6, cy - r - 14);
+  ctx.fillStyle='#cfe8ff'; ctx.fillText(text, cx - w/2 + 6, cy - r - 14);
+}
+
+/* ---------- Pareto bar overlay (runtime) ---------- */
+function drawParetoBar(){
+  if(weights.length===0) return;
+  const x = 12, y = 12, W = 280, H = 44;
+  ctx.save();
+  ctx.fillStyle='rgba(16,20,30,.78)'; ctx.strokeStyle='#27304a'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.roundRect(x,y,W,H,10); ctx.fill(); ctx.stroke();
+
+  // Sorted weights, cumulative
+  const arr = weights.slice().sort((a,b)=>b-a);
+  let cum=0; const target = cfg.targetMass;
+  let kStar = arr.length;
+  for(let i=0;i<arr.length;i++){ cum += arr[i]; if(cum>=target){ kStar=i+1; break; } }
+  const headFrac = kStar/arr.length;
+  const headW = Math.max(1, Math.floor(W*headFrac));
+
+  // head area
+  ctx.fillStyle='rgba(110,231,166,.35)'; ctx.fillRect(x+1, y+H-16, headW-2, 10);
+  // tail area
+  ctx.fillStyle='rgba(97,218,251,.25)'; ctx.fillRect(x+headW, y+H-16, W-headW-1, 10);
+
+  // labels
+  ctx.fillStyle='#cfe8ff'; ctx.font='12px ui-monospace';
+  ctx.fillText(`Pareto (runtime) — τ=${cfg.paretoTau.toFixed(2)} • head ${kStar}/${arr.length} (${(headFrac*100).toFixed(1)}%) • mass ${Math.min(cum,1).toFixed(2)}`, x+8, y+16);
+  ctx.restore();
+
+  // stats panel mirrors
+  E.statK.textContent = `${kStar}/${arr.length}`;
+  E.statMass.textContent = Math.min(cum,1).toFixed(2);
 }
 
 /* ---------- Render loop ---------- */
-function render(){
+let lastT = performance.now();
+function render(tNow){
+  const dtSec = Math.min(0.1, (tNow - lastT)/1000); lastT = tNow;
+
+  // Auto Pareto control
+  if(cfg.autoPareto && points.length>0){
+    autoAdjustTau(dtSec); // adapts τ to maintain ~80/20 (or chosen mass)
+  }
+
   const W=stage.clientWidth, H=stage.clientHeight;
   ctx.clearRect(0,0,W,H);
   ctx.fillStyle='#0f131d'; ctx.fillRect(0,0,W,H);
@@ -457,9 +479,12 @@ function render(){
     if(p.mood>=0) posCount++; else negCount++;
   }
 
-  // lens overlay (after base points)
+  // lens overlay
   const {scores} = lensScores();
   drawLensOverlay(scores);
+
+  // dynamic Pareto bar (runtime)
+  drawParetoBar();
 
   // stats
   E.statG.textContent = ds.g.toFixed(3);
@@ -475,32 +500,33 @@ requestAnimationFrame(render);
 /* ---------- Interaction ---------- */
 stage.addEventListener('click', (e)=>{
   const rect=stage.getBoundingClientRect(); const x=e.clientX-rect.left, y=e.clientY-rect.top;
-  // if click inside lens, do not toggle lock (just move via drag); otherwise lock nearest
-  const inside = Math.hypot(x-lens.x, y-lens.y) <= lens.r;
-  if(inside) return;
+  const inside = Math.hypot(x-lens.x, y-lens.y) <= lens.r; if(inside) return;
   let best=-1, bd=1e9;
-  for(let i=0;i<points.length;i++){
-    const dx=points[i].x-x, dy=points[i].y-y, d=dx*dx+dy*dy; if(d<bd){ bd=d; best=i; }
-  }
+  for(let i=0;i<points.length;i++){ const dx=points[i].x-x, dy=points[i].y-y, d=dx*dx+dy*dy; if(d<bd){ bd=d; best=i; } }
   if(best>=0){ if(lockSet.has(best)) lockSet.delete(best); else lockSet.add(best); }
 });
 
 /* ---------- Control events ---------- */
-E.tau.addEventListener('input', e=>{ cfg.paretoTau=parseFloat(e.target.value); E.labTau.textContent=cfg.paretoTau.toFixed(2); E.statT.textContent=cfg.paretoTau.toFixed(2); weights=softmax(points.map(p=>p.sal), Math.max(0.05,cfg.paretoTau)); });
-E.q.addEventListener('input', e=>{ cfg.qualityQ=parseFloat(e.target.value); E.labQ.textContent=cfg.qualityQ.toFixed(2); });
-E.intent.addEventListener('input', e=>{ cfg.intentStrength=parseFloat(e.target.value); E.labIntent.textContent=cfg.intentStrength.toFixed(2); buildART(); });
-E.axis.addEventListener('change', e=>{ cfg.intentAxis=e.target.value; buildART(); });
-E.nu.addEventListener('input', e=>{ cfg.artNu=parseInt(e.target.value,10); E.labNu.textContent=cfg.artNu; buildART(); });
-E.pts.addEventListener('input', e=>{ cfg.artPoints=parseInt(e.target.value,10); E.labPts.textContent=cfg.artPoints; lockSet.clear(); buildART(); });
-E.mood.addEventListener('input', e=>{ cfg.moodStrength=parseFloat(e.target.value); E.labMood.textContent=cfg.moodStrength.toFixed(2); buildART(); });
+rngTau.addEventListener('input', e=>{ cfg.paretoTau=parseFloat(e.target.value); labTau.textContent=cfg.paretoTau.toFixed(2); statT.textContent=cfg.paretoTau.toFixed(2); recomputeWeights(); });
+rngQ.addEventListener('input', e=>{ cfg.qualityQ=parseFloat(e.target.value); labQ.textContent=cfg.qualityQ.toFixed(2); });
+rngIntent.addEventListener('input', e=>{ cfg.intentStrength=parseFloat(e.target.value); labIntent.textContent=cfg.intentStrength.toFixed(2); buildART(); });
+selAxis.addEventListener('change', e=>{ cfg.intentAxis=e.target.value; buildART(); });
+rngNu.addEventListener('input', e=>{ cfg.artNu=parseInt(e.target.value,10); labNu.textContent=cfg.artNu; buildART(); });
+rngPts.addEventListener('input', e=>{ cfg.artPoints=parseInt(e.target.value,10); labPts.textContent=cfg.artPoints; lockSet.clear(); buildART(); });
+rngMood.addEventListener('input', e=>{ cfg.moodStrength=parseFloat(e.target.value); labMood.textContent=cfg.moodStrength.toFixed(2); buildART(); });
 
-E.btnShuffle.addEventListener('click', ()=>{ seed=(seed*1664525+1013904223)>>>0; lockSet.clear(); buildART(); });
-E.btnClear.addEventListener('click', ()=>{ lockSet.clear(); });
+btnShuffle.addEventListener('click', ()=>{ seed=(seed*1664525+1013904223)>>>0; lockSet.clear(); buildART(); });
+btnClear.addEventListener('click', ()=>{ lockSet.clear(); });
 
-E.btnApply.addEventListener('click', ()=>{ const parsed=parseSimuLang(E.simTxt.value); cfg={...cfg,...parsed}; syncControls(); lockSet.clear(); buildART(); });
-E.btnReset.addEventListener('click', ()=>{ E.simTxt.value=defaultSimuLang; cfg=parseSimuLang(E.simTxt.value); syncControls(); lockSet.clear(); buildART(); });
+btnApply.addEventListener('click', ()=>{ const parsed=parseSimuLang(simTxt.value); cfg={...cfg,...parsed}; syncControls(); lockSet.clear(); buildART(); });
+btnReset.addEventListener('click', ()=>{ simTxt.value=defaultSimuLang; cfg=parseSimuLang(simTxt.value); syncControls(); lockSet.clear(); buildART(); });
 
-/* ---------- Outlook grid init ---------- */
+chkAutoPareto.addEventListener('change', (e)=>{ cfg.autoPareto = e.target.checked; });
+rngTargetMass.addEventListener('input', (e)=>{ cfg.targetMass = parseFloat(e.target.value); labTargetMass.textContent = cfg.targetMass.toFixed(2); });
+
+/* ---------- First-time setup ---------- */
+buildART();
+labTargetMass.textContent = cfg.targetMass.toFixed(2);
 </script>
 </body>
 </html>
